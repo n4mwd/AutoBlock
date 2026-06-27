@@ -11,7 +11,7 @@ GITHUB_REPO="YOUR_REPO_NAME"
 BRANCH="main"
 
 TARGET_DIR="/usr/AutoBlock"
-TARBALL_URL="https://github.com"
+TARBALL_URL="https://github.com/n4mwd/AutoBlock/archive/refs/heads/main.tar.gz"
 
 # ------------------------------------------------------------------------------
 # UNIFIED PROMPT FUNCTION
