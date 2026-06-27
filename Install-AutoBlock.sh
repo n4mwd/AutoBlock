@@ -167,12 +167,18 @@ Compile_Code()
     echo "Downloading AutoBlock source components from GitHub..."
     mkdir -p "$TARGET_DIR"    # make parent directories as needed
 
-
-    if ! curl -fsSL "$TARBALL_URL" | tar -xzf - -C "$TARGET_DIR" --strip-components=1; then
-        echo "ERROR: Failed to download or extract distribution components."
+    # 1. Download the file using -L and save it into your directory
+    if ! curl -fsSL "$TARBALL_URL" -o "$TARGET_DIR/main.tar.gz"; then
+        echo "ERROR: Failed to download distribution components."
         exit 1
     fi
-
+    
+    # 2. Extract the archive by pointing -f to the actual file path, and -C to the directory path
+    if ! tar -xzf "$TARGET_DIR/main.tar.gz" -C "$TARGET_DIR" --strip-components=1; then
+        echo "ERROR: Failed to extract distribution components."
+        exit 1
+    fi
+    
     echo "✅ Source files successfully downloaded."
 
     # ------------------------------------------------------------------------------
