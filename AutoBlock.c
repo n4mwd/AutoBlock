@@ -174,10 +174,13 @@ int main(void)
     TrieNode *TriRoot;
     char *IpStr;
     bool changed=false;
-
-
 #if defined(__BORLANDC__)
     WSADATA wsaData;
+#endif
+
+    PrintErr(WARN, "AutoBlock Process Started.\n");
+
+#if defined(__BORLANDC__)
     if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0)
     {
         PrintErr(FATAL, "Winsock initialization failed.\n");
