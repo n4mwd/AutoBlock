@@ -10,7 +10,9 @@ GITHUB_USER="YOUR_GITHUB_USERNAME"
 GITHUB_REPO="YOUR_REPO_NAME"
 BRANCH="main"
 
-TARGET_DIR="/usr/AutoBlock"
+
+TEMP_DIR="/tmp/AutoBlock"
+DATA_DIR="/root/AutoBlock"
 TARBALL_URL="https://github.com/n4mwd/AutoBlock/archive/refs/heads/main.tar.gz"
 
 # ------------------------------------------------------------------------------
@@ -165,16 +167,16 @@ Compile_Code()
     # ------------------------------------------------------------------------------
     echo ""
     echo "Downloading AutoBlock source components from GitHub..."
-    mkdir -p "$TARGET_DIR"    # make parent directories as needed
+    mkdir -p "$TEMP_DIR"    # make parent directories as needed
 
     # 1. Download the file using -L and save it into your directory
-    if ! curl -fsSL "$TARBALL_URL" -o "$TARGET_DIR/main.tar.gz"; then
+    if ! curl -fsSL "$TARBALL_URL" -o "$TEMP_DIR/main.tar.gz"; then
         echo "ERROR: Failed to download distribution components."
         exit 1
     fi
     
     # 2. Extract the archive by pointing -f to the actual file path, and -C to the directory path
-    if ! tar -xzf "$TARGET_DIR/main.tar.gz" -C "$TARGET_DIR" --strip-components=1; then
+    if ! tar -xzf "$TEMP_DIR/main.tar.gz" -C "$TEMP_DIR" --strip-components=1; then
         echo "ERROR: Failed to extract distribution components."
         exit 1
     fi
@@ -187,16 +189,16 @@ Compile_Code()
     echo "Compiling AutoBlock ..."
     
     # Change into download directory
-    if ! cd "$TARGET_DIR"; then
+    if ! cd "$TEMP_DIR"; then
         # If here, then the cd didn't work.
         echo "================================================================="
-        echo "ERROR: Could not access the $TARGET_DIR directory:"
+        echo "ERROR: Could not access the $TEMP_DIR directory:"
         echo "================================================================="
     
         # Proactively check why it failed to give a smart tip
-        if [ ! -d "$TARGET_DIR" ]; then
+        if [ ! -d "$TEMP_DIR" ]; then
             echo "Reason: The directory does not exist."
-        elif [ ! -r "$TARGET_DIR" ] || [ ! -x "$TARGET_DIR" ]; then
+        elif [ ! -r "$TEMP_DIR" ] || [ ! -x "$TEMP_DIR" ]; then
             echo "Reason: Permission denied."
         fi
         echo "================================================================="
@@ -218,7 +220,6 @@ Compile_Code()
 }
 
 
-#!/bin/bash
 
 is_dropbear() 
 {
@@ -234,14 +235,6 @@ is_dropbear()
     fi
 }
 
-
-#!/bin/bash
-
-# Ensure this script is running as root/sudo
-if [ "$EUID" -ne 0 ]; then
-    echo "❌ Please run this script as root or using sudo."
-    exit 1
-fi
 
 # Global Variable
 ROUTER_IP="192.168.1.1" # The script assumes this is set globally
@@ -390,7 +383,7 @@ Check_Router()
 if [ "$EUID" -ne 0 ]; then
     echo "=================================================================="
     echo "ERROR: Root privileges are required to install AutoBlock."
-    echo "Please re-run this installer using: sudo $0"
+    echo "Please re-run this installer using: sudo bash $0"
     echo "=================================================================="
     exit 1
 fi
@@ -407,6 +400,7 @@ if ! command -v asterisk >/dev/null 2>&1 && [ ! -d /etc/asterisk ]; then
     prompt_user "Asterisk was not found on this system, install AutoBlock anyway?"
 fi
 
+mkdir -p "$DATA_DIR"    # make parent directories as needed
 
 # call function to make sure dependencies are installed.
 check_and_install_dependencies
@@ -447,13 +441,13 @@ fi
 
 # Map production binary to system path
 echo "Finishing up install."
-cp -f "$TARGET_DIR/AutoBlock" /usr/bin/AutoBlock
+cp -f "$TEMP_DIR/AutoBlock" /usr/bin/AutoBlock
 chmod 755 /usr/bin/AutoBlock
 chown root:root /usr/bin/AutoBlock
 
 # copy config file
 if [ ! -f /etc/AutoBlock.conf ]; then
-   cp "$TARGET_DIR/AutoBlock.conf" /etc/AutoBlock.conf
+   cp "$TEMP_DIR/AutoBlock.conf" /etc/AutoBlock.conf
    chmod 644 /etc/AutoBlock.conf
    chown root:root /etc/AutoBlock.conf
    echo "✅ Default configuration file deployed to /etc/AutoBlock.conf"
@@ -489,7 +483,7 @@ done
 if [ "$CRON_TIME" != "skip" ]; then
 
     # 1. Define the temporary file location
-    temp_cron_file="$TARGET_DIR/autoblock_cron.tmp"
+    temp_cron_file="$TEMP_DIR/autoblock_cron.tmp"
     
     # 2. Define the exact line we want to add
     cron_job="$CRON_TIME /usr/bin/AutoBlock > /dev/null 2>&1"
@@ -519,6 +513,10 @@ else
 fi
   
 
+# remove temporary directory
+rm -rf "$TEMP_DIR"
+  
+  
 # ------------------------------------------------------------------------------        
 
 
