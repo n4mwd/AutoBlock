@@ -261,6 +261,7 @@ is_dropbear()
 
 copy_ssh_key() 
 {
+    local TARGET_DIR
     # Dynamically branches using your updated global-variable function
     if is_dropbear; then
         echo "🎯 Detected Dropbear SSH server (OpenWrt/Embedded)."
