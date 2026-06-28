@@ -218,6 +218,76 @@ Compile_Code()
 }
 
 
+#!/bin/bash
+
+is_dropbear() 
+{
+    # Grab the SSH software version string via netcat
+    # Dropbear banners look like: "SSH-2.0-dropbear_2022.82"
+    local banner
+    banner=$(nc -w 2 "$ROUTER_IP" 22 2>/dev/null | head -n 1)
+
+    if echo "$banner" | grep -iq "dropbear"; then
+        return 0 # True: It is Dropbear
+    else
+        return 1 # False: OpenSSH or something else
+    fi
+}
+
+
+#!/bin/bash
+
+# Ensure this script is running as root/sudo
+if [ "$EUID" -ne 0 ]; then
+    echo "❌ Please run this script as root or using sudo."
+    exit 1
+fi
+
+# Global Variable
+ROUTER_IP="192.168.1.1" # The script assumes this is set globally
+
+is_dropbear() 
+{
+    local banner
+    # Quoted global variable to handle empty values safely
+    banner=$(nc -w 2 "$ROUTER_IP" 22 2>/dev/null | head -n 1)
+
+    if echo "$banner" | grep -iq "dropbear"; then
+        return 0 
+    else
+        return 1 
+    fi
+}
+
+copy_ssh_key() 
+{
+    # Dynamically branches using your updated global-variable function
+    if is_dropbear; then
+        echo "🎯 Detected Dropbear SSH server (OpenWrt/Embedded)."
+        TARGET_DIR="/etc/dropbear"
+        TARGET_FILE="/etc/dropbear/authorized_keys"
+    else
+        echo "🐧 Detected standard SSH server (OpenSSH/Generic Linux)."
+        TARGET_DIR="/root/.ssh"
+        TARGET_FILE="/root/.ssh/authorized_keys"
+    fi
+
+    echo "Pushing SSH key to $TARGET_FILE..."
+    
+    # Explicit path works perfectly since the script is fully running as root
+    cat /root/.ssh/id_ed25519.pub | ssh root@"$ROUTER_IP" \
+        "mkdir -p $TARGET_DIR && cat >> $TARGET_FILE && chmod 0600 $TARGET_FILE"
+
+    if [ $? -eq 0 ]; then
+        echo "✅ Operation completed successfully."
+        return 0
+    else
+        echo "❌ Error injecting key."
+        return 1
+    fi
+}
+
+
 Check_Router()
 {
     echo "The script will now validate your root SSH key for authentication with your router."
@@ -265,8 +335,11 @@ Check_Router()
     echo "Router active. Preparing remote public key installation..."
     echo "NOTE: You will be prompted to enter your router's root password below."
 
-    ssh-copy-id -o StrictHostKeyChecking=no -i "${KEY_FILE}.pub" root@"$ROUTER_IP"
-    if [ $? -ne 0 ]; then
+    #use the following for openwrt
+    # cat ~/.ssh/id_ed25519.pub | ssh root@"$ROUTER_IP" "mkdir -p /etc/dropbear && cat >> /etc/dropbear/authorized_keys && chmod 0600 /etc/dropbear/authorized_keys"
+
+    # ssh-copy-id -o StrictHostKeyChecking=no -i "${KEY_FILE}.pub" root@"$ROUTER_IP"
+    if ! copy_ssh_key; then
         echo "ERROR: Key verification handshake failed. Confirm router credentials and re-run this script."
         exit 1
     fi
@@ -359,7 +432,7 @@ echo "------------------------------------------------------------------"
 read -p "Are you planning on using the default installation? (y/n): " router_choice
 
 if [[ "$router_choice" =~ ^[Yy]$ ]]; then
-    CheckRouter
+    Check_Router
 else
     echo ""
     echo "------------------------------------------------------------------"
@@ -377,7 +450,7 @@ cp -f "$TARGET_DIR/AutoBlock" /usr/bin/AutoBlock
 chmod 755 /usr/bin/AutoBlock
 chown root:root /usr/bin/AutoBlock
 
-// copy config file
+# copy config file
 if [ ! -f /etc/AutoBlock.conf ]; then
    cp "$TARGET_DIR/AutoBlock.conf" /etc/AutoBlock.conf
    chmod 644 /etc/AutoBlock.conf
