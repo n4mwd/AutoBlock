@@ -35,8 +35,8 @@ address is: dennis@galliform.com
 #else
   #define CONFIGPATH  "/etc/AutoBlock.conf"  // config location
   #define DEFAULTLOGFILE "/var/log/AutoBlock.log"  // default until changed
-  #define SRCPATH  "/usr/bin/AutoBlock/Bad-Ips.txt" // local bad ip file sent to router
-  #define MAINPATH "/usr/bin/AutoBlock/Whois.txt"  // whois file
+  #define SRCPATH  "/root/AutoBlock/Bad-Ips.txt" // local bad ip file sent to router
+  #define MAINPATH "/root/AutoBlock/Whois.txt"  // whois file
 #endif
 
 
