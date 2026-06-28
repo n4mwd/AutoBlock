@@ -489,10 +489,10 @@ done
 if [ "$CRON_TIME" != "skip" ]; then
 
     # 1. Define the temporary file location
-    local temp_cron_file="$TARGET_DIR/autoblock_cron.tmp"
+    temp_cron_file="$TARGET_DIR/autoblock_cron.tmp"
     
     # 2. Define the exact line we want to add
-    local cron_job="$CRON_TIME /usr/bin/AutoBlock > /dev/null 2>&1"
+    cron_job="$CRON_TIME /usr/bin/AutoBlock > /dev/null 2>&1"
 
     echo "Scheduling automated task..."
 
