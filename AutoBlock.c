@@ -168,7 +168,8 @@ bool NotRootOwned(char *path)
 
 int main(void)
 {
-    int count, bits, oldbits, i, rt;
+    int countHash, countUnique, countWhois;
+    int bits, oldbits, i, rt;
     DWORD ip;
     IPTYPE ipBlk;
     TrieNode *TriRoot;
@@ -220,16 +221,17 @@ int main(void)
 
     // Read message log
     PrintErr(STATUS, "Reading New IP's from: %s\n", G_AsteriskNoticeFile);
-    count = HashMessages();
-    if (count >= 0)
-        PrintErr(STATUS, "There were %d bad IP's added to the hash table.\n", count);
+    countHash = HashMessages();
+    if (countHash >= 0)
+        PrintErr(STATUS, "There were %d bad IP's added to the hash table.\n",
+                 countHash);
 
     // Convert to flat linked list
-    count = HashFlat();
-    PrintErr(STATUS, "There were %d unique bad IP's in the hash table.\n", count);
+    countUnique = HashFlat();
+    PrintErr(STATUS, "There were %d unique bad IP's in the hash table.\n", countUnique);
 
     // Read hash table and add to Trie
-    count = 0;
+    countWhois = 0;
     GetNextHash(true);   // initialize the walker
     while ((ip = GetNextHash(false)) != 0)
     {
@@ -238,11 +240,11 @@ int main(void)
         if (G_UseWhois)
         {
             // Use whois to find netblock
-            count++;
+            countWhois++;
             ipBlk.IP = ip;
             ipBlk.bits = 0;
             IpStr = IP2Str(ipBlk);
-            PrintErr(STATUS, "%d: Whois: %s -> ", count, IpStr);
+            PrintErr(STATUS, "%d: Whois: %s -> ", countWhois, IpStr);
             bits = query_radb_netblock(IpStr, &ipBlk);
             if (bits)
             {
@@ -265,7 +267,7 @@ int main(void)
         PrintErr(STATUS, "\n");
     }
 
-    PrintErr(STATUS, "There were %d new netbocks added to the blacklist.\n", count);
+    PrintErr(STATUS, "There were %d new netbocks added to the blacklist.\n", countWhois);
     destroy_hash_table();   // free hash table
 
     // Save unmangled netblocks to the history file.
@@ -308,6 +310,10 @@ int main(void)
 
 
     FreeConfig();   // free the heap
+
+    PrintErr(WARN, "AutoBlock Run, %d IPs found in logs, "
+                   "%d unique, %d newly blocked.\n",
+                   countHash, countUnique, countWhois);
 
     return(0);
 
