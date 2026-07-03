@@ -181,6 +181,7 @@ int ParseConfig(const char *filepath);
 int SearchID(int ext);
 void FreeConfig(void);
 int whitelist_netblock(TrieNode* root, IPTYPE ip);
+bool is_ip_whitelisted(DWORD ip);
 
 
 

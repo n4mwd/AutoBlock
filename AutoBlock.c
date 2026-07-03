@@ -179,7 +179,6 @@ int main(void)
     WSADATA wsaData;
 #endif
 
-    PrintErr(WARN, "AutoBlock Process Started.\n");
 
 #if defined(__BORLANDC__)
     if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0)
@@ -236,6 +235,11 @@ int main(void)
     while ((ip = GetNextHash(false)) != 0)
     {
         if (is_ip_covered(TriRoot, ip)) continue; // already there
+
+        // We check the whitelist twice.  Here we check it before it gets
+        // added to the blacklist trie.  Later we check the trie again to
+        // make sure it didn't slip in as part of a larger block.
+        if (is_ip_whitelisted(ip)) continue;      // don't add friends
 
         if (G_UseWhois)
         {

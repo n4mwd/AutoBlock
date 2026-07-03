@@ -608,6 +608,61 @@ void ProcessIgnoredBlocks(char **Tokens)
 }
 
 
+// typedef struct
+// {
+//     DWORD IP;       // IPv4 in DWORD format
+//     DWORD bits;     // cidr bits
+// } IPTYPE;
+
+// Search the G_IgnoreBlocks[] table to see if the parameter ip (in DWORD
+// format) is contained within any of the IP blocks in the table.  Return
+// true, if any of the blocks in the table encompass the ip, else false.
+
+bool is_ip_whitelisted(DWORD ip)
+{
+    DWORD block_ip, bits, mask;
+    int i;
+
+    // Loop through all elements in the global array
+    for (i = 0; i < G_NumIgnoreBlocks; i++)
+    {
+        block_ip = G_IgnoreBlocks[i].IP;
+        bits = G_IgnoreBlocks[i].bits;
+
+        // Handle edge case: a 0-bit mask encompasses the entire
+        // internet (0.0.0.0/0)
+        if (bits == 0)
+        {
+            mask = 0;
+        }
+        // Handle standard CIDR masks (1 to 32 bits)
+        else if (bits >= 32)
+        {
+            mask = 0xFFFFFFFF;
+        }
+        else
+        {
+            // Create a mask with the highest 'bits' set to 1.
+            mask = (0xFFFFFFFF << (32 - bits));
+        }
+
+        // Compare the network prefixes of both the parameter IP and
+        // the block IP
+        if ((ip & mask) == (block_ip & mask))
+        {
+            return true; // Match found, IP is whitelisted
+        }
+    }
+
+    return false; // No blocks encompassed the IP
+}
+
+
+
+
+
+
+
 // Search the G_AllowedNumericalIds table for the extension
 // Return TRUE if NOT found.
 
