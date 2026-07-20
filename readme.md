@@ -22,7 +22,7 @@ Here is a comparison bewteen Fail2Ban and AutoBlock:  <br>
 | Log Dependency | High-volume SECURITY logging | Minimal NOTICE logging |
 | Processing Frequency | Continuous | Batch (every 15 min to 1 day) |
 | Support | Massive Community | Brand New |
-| Ban Length | Temporary and Permanent | Permanent only |
+| Ban Length | Temporary and Permanent | Temporary only |
 | Whitelist DDNS | Not Supported | Supported (Incl. DDNS Netblocks) |
 | Real Time Notification | Supported | Not Supported |
 | Public Blacklists | Not Supported | Supported |
