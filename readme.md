@@ -1,182 +1,155 @@
  
-# AutoBlock
+# <center>AutoBlock</center>
 
-AutoBlock is a program that stops hackers from reaching your Asterisk server. Autoblock doesn't just block the IP addresses of hackers, but instead blocks their entire netblock. It is a very lightweight program (< 50K) that will read the Asterisk logs, figure out if there are any hackers trying to hack into your Asterisk system, create a list of the hacker's IP netblocks, and then push an ipset to your OpenWrt router so that it will block those IP netblocks. With a normal installation that uses your OpenWrt router, the attackers are blocked before they reach your Asterisk server.
+AutoBlock is an ultra-lightweight (< 50K) Asterisk intrusion prevention system that stops hackers at your router before they ever touch your Asterisk server. A fast, low cpu resource alternative to *Fail2Ban*, it intelligently analyzes standard Asterisk logs for malicious activity and then automatically sends a list of hacker IP netblocks to your OpenWrt router.  It aggressively neutralizes entire hacker netblocks rather than just single IP addresses. This proactive approach permanently cuts off attackers that attempt to mask themselves using public VPNs. 
 
-AutoBlock searches for hackers using the Asterisk `NOTICE` message and does not use the excessively voluminous `SECURITY` messages. So using the `SECURITY` flag for logging is not required and discouraged.
+AutoBlock runs as a cron job and searches for hackers using the Asterisk `NOTICE` message and **DOES NOT** use the excessively voluminous `SECURITY` messages. So using the `SECURITY` flag for logging is not required and strongly discouraged.
 
-Under user configuration, the program will block the hacker's entire netblock, not just the IP he is using. Because most hackers use public VPN's, and regular users do not, blocking the VPN's entire netblock stops him cold. If you only blocked the single IP, then the hacker would simply switch to a different IP provided by the VPN and then continue as usual. The ipset system in OpenWrt uses hash searches which are extremely fast and efficient.
+AutoBlock operates with maximum efficiency, low system overhead, and zero reliance on bloated security logs.  In addition, AutoBlock can seamlessly include publicly available VOIP hacker lists so most hackers never get a chance to make a log entry in the first place.
 
-In case it wasn't obvious, this program is designed to run on the Asterisk server as a cron job. The program here is supplied as source only, but I have written a bash script that will automatically handle the full installation, including compilation, for most users. This program is currently designed to run only on Linux, specifically Debian-based Linux. If you want to run it on other OS'es, you may need to tweak the C source code a bit. As long as you use `gcc` to compile it, you shouldn't have any major problems.
+If you are familiar with <u>*Fail2Ban*</u>, then you already understand the basic principles of AutoBlock.  There are advantages and disadvantages to both.  Fail2Ban is generally for larger systems with CPU and disk resources to spare, whereas AutoBlock is designed for smaller systems.  AutoBlock runs fine on a Raspberry Pi 3b with only 1 Gb of RAM.  Running Fail2Ban on a Pi 3b would choke the system when continuously parsing SECURITY logs.
+
+Here is a comparison bewteen Fail2Ban and AutoBlock:  <br>
+
+
+| Feature | Fail2Ban | AutoBlock |
+|---|---|---|
+| System Footprint | Heavy (Python-based daemon) | Ultra-lightweight (< 50K binary) |
+| Written Language | Slow Interpreted Python | Fast&amp;Lean Compiled C |
+| Target Scope | Any service (SSH, Web, Asterisk) | Asterisk Only |
+| Blocking Scope | Single IP addresses (/32) | Entire ISP/VPN Netblocks (/16 or /24) |
+| Defense Location | Locally on the server | Offloaded to Router |
+| Log Dependency | High-volume SECURITY logging | Minimal NOTICE logging |
+| Processing Frequency | Continuous | Batch (every 15 min to 1 day) |
+| Support | Massive Community | Brand New |
+| Ban Length | Temporary and Permanent | Permanent only |
+| Whitelist DDNS | Not Supported | Supported (Incl. DDNS Netblocks) |
+| Real Time Notification | Supported | Not Supported |
+| Public Blacklists | Not Supported | Supported |
+| IP Family | IPv4 and IPv6 | IPv4 Only |
+
+
+## What AutoBlock Does
+
+AutoBlock protects your Asterisk server from brute-force attacks while safeguarding your hardware and blocking hackers permanently at the router.
+
+### 1. Prevents Hardware Damage
+Brute-force attacks generate millions of failed login attempts. This flood of data overwrites logs constantly, which can cause physical wear and premature failure on solid-state drives (SSDs).
+
+### 2. Blocks Entire Netblocks, Not Just Single IPs
+
+Instead of blocking a single IP address, AutoBlock identifies the entity owning that IP and blocks their entire netblock.
+
+* Example: A hacker attacking from 5.135.64.122 triggers an ownership rule that blocks all of 5.135.0.0/16.
+* Result: A single entry instantly bans 65,536 IP addresses. This stops hackers from simply switching to a different IP address provided by their public VPN.
+
+### 3. Stops Attacks at the Router Perimeter
+
+Once compiled, AutoBlock uploads the blocklist directly to your OpenWrt router. This ensures malicious traffic is dropped at the edge of your network before it ever reaches your Asterisk server.
+
+(Note: While it is possible to use the ipset compatible firewall in your Asterisk server and not use an OpenWrt router, that setup is not covered in this guide).
+
+## What if one of my remote users accidentally gets added to the block list?
+
+AutoBlock fully supports a whitelist.  You can add your user's IP addresses or you can use a domain name.  If your user still manages to get added to the block list, you can manually remove his IP with: 
+
+```
+    sudo AutoBlock -remove <IP or url>
+```
+
+## AutoBlock Limitations
+
+* Asterisk Version: AutoBlock will not work with older versions of Asterisk that do not give sufficient information in a NOTICE log entry.  Older versions would tell you that someone was attacking, but not who was doing it.  See the Dependencies section below for the NOTICE format required.  Generally, the use of chan_pjsip is required over chan_sip.
+* OS Dependent: AutoBlock was designed to run on Debian based Linux machines (Ubuntu, MX Linux, etc).  However, it is distributed as source so it very possible, but not guaranteed, to work on non-Debian Linux Distros (Red Hat, Arch, etc.).  It can even be compiled to run under windows if you could get Asterisk to run on Windows.
+* IPv4 Only: AutoBlock does not support IPv6.  It is recommended that IPv6 access to your Asterisk server be turned off.  Even if IPv6 was supported, the IPv6 address space is so vast that blocking all the bad guys would be impractical.  A typical home user account could have trillions upon trillions of IPv6 addresses to choose from when hacking other people's servers.
+* Router Dependency: AutoBlock was developed to have a symbiotic relationship with an OpenWrt router.  The default commands in AutoBlock.conf usually work perfectly with modern OpenWrt routers.  For routers running firmware other than OpenWrt, if they support remote access with ssh, scp and rsync, then  modifying the AutoBlock.conf file is usually all that is required.  Routers that do not support remote access with ssh cannot be used.  It is possible to bypass the router requirement by using the firewall on the Asterisk server itself, but that method is not officially supported.
+
+
+
+
+## Will my Public VPN get blocked by AutoBlock?
+
+Yes, your Public VPN could get blocked under certain conditions. AutoBlock automatically stops all blacklisted incoming UDP traffic at the router level. Because many VPNs rely on the UDP protocol, this can disrupt your connection.
+
+Here is how AutoBlock impacts different VPN setups:
+
+* Remote Access via Public VPN: If you use a public UDP-based VPN to connect to your Asterisk server from off-site, AutoBlock will likely block it eventually since hackers use the same public VPNs.
+* Local Use of Public VPN: If you use a public UDP-based VPN on your local network to browse external websites, your connection is less likely, but still possible, to face disruption.  If your public VPN uses a symmetric UDP port to transfer data, it will not likely have any issues.  Likewise, if it uses a TCP port, it will not be affected.
+
+If you experience connectivity issues accessing your public VPN, you can resolve them using two main methods:
+
+* Switch to TCP Mode: Change your public VPN provider's connection settings from UDP to TCP mode to bypass the filter.
+* Create a Private VPN: Configure OpenWrt to run a private WireGuard VPN. This completely eliminates the blocking problem. While this method does not provide anonymity, it does protect your data when operating remotely.  It also has the advantage of being able to access other computers and printers from off site in a totally secure way.
+
 
 ## What Happens If You Aren't using An OpenWrt Router?
 
-You can use other routers, but AutoBlock requires the router to be remotely accessible with ssh using ssh keys. It also requires that whatever firewall is being used by the router, it must be compatible with IpSets. Most newer versions of OpenWrt support IpSets. Non-standard installations, where the firewall on the Asterisk server itself is being used to block the IPs, can be used but not actively supported.
+You can use other routers, but AutoBlock requires the router to be remotely accessible with ssh using ssh keys. It also requires that whatever firewall is being used by the router, it must be compatible with IpSets. Most newer versions of OpenWrt support IpSets. Non-standard installations, where the firewall on the Asterisk server itself is being used to block the IPs, can be used but are not officially supported.
 
-## PREREQUISITES 
 
-This program requires a fairly modern version of Asterisk that supports `pjsip` and `NOTICE` messages that carry enough information that the attacker can be identified. AutoBlock specifically requires the following format for a `NOTICE` line:
 
-```text
-[Jun 12 10:25:27] NOTICE[88448] res_pjsip/pjsip_distributor.c: Request 'INVITE' from
-  '"'1001'" <sip:1001@1.2.3.4>' failed for '5.135.173.212:16071' (callid: 9c2726618f71e1aa-call)
-  - No matching endpoint found
-
-```
-
-The "failed for" is the hackers IP address. Older SIP installations will probably not work right.
-
-For a default installation, you will also need a router that is upstream from the Asterisk server that supports ssh (via ssh keys), scp and rsync. While OpenWrt is recommended, other router firmwares can also work if they support remote access via ssh. However, anything except OpenWrt is beyond the scope of this readme.
-
-## OPENWRT CONFIGURATION
-
-For OpenWrt, log in to the gui and configure it to work with ssh on the LAN. Go to **System -> Administration** and then click the **SSH access** tab. Make sure **Interface** is set to **LAN only**. Never enable WAN mode or everyone on the Internet will have access to your router and possibly be able to change things. Port should be 22. Check **Password Authentication** and **Allow Root Passwords**. Save and Apply. Note that the AutoBlock installation process requires ssh to work with passwords, but after it is installed, you may disable password authentication if you wish. AutoBlock only uses ssh keys for authentication once it is installed.
-
-Next, make sure the the required communication programs are installed. In the OpenWrt gui, go to **System -> Software**. Click the "Update Lists" button and wait for it to complete. In the filter box, type "rsync". This will cause rsync to be displayed at the top of the package list. If is doesn't say "Installed", then click the Install button and install it. You can also install "openssh-sftp-server" if you want for better scp access, but this is not required.
-
-Now lets configure the firewall. Before the firewall can be configured to use IpSets, the `/etc/luci-uploads/blocklist.txt` ipset file must exist. From the command line on the computer that is running the web browser to access OpenWrt, run:
-
-```bash
-    echo "5.135.0.0/16" > ~/blocklist.txt
-
-```
-
-That is good enough for now and the first time AutoBlock is run with `DryRun` set to `False` this file will be overwritten with actual data. Note that the IP in this example is an actual hacker.
-
-Now go back to the gui and select **Network -> FireWall** and then click the **IpSets** tab. Click **Add**. Set the following:
-
-* **Name**: "IncludedIpSet"
-* **Comment**: "Automatically generated by Asterisk"
-* **Packet Field Match**: "net: (sub)net"
-* **IPs/Networks, MACs**: leave blank
-* **MaxEntries**: leave blank
-* **Include File**: Click "UPLOAD FILE" and then select "blocklist.txt" file you previously created in your home directory.
-* **timeout**: 0
-* **counters**: check for now, it lets to see how many packets have been blocked. Uncheck after you have AutoBlock working properly.
-
-Click **Save** to close page, then **Save & Apply** on the following page.
-
-Now go to **Network -> Firewall** and click the **Traffic Rules** tab. Then click **ADD** then the **General Settings** tab. Enter the following fields:
-
-* **Name**: "Block-Attacker-IPSet"
-* **Protocol**: UDP
-* **Source zone**: WAN
-* **Source Address**: leave blank
-* **Source Port**: Leave default
-* **Destination zone**: ANY
-* **Destination Address**: leave blank
-* **Destination Port**: leave default
-* **Action**: DROP
-
-Click the **Advanced Settings** Tab and set the fields to the following:
-
-* **Match Device**: Unspecified
-* **Restrict to address family**: IPv4 only
-* **Use IPset**: Use the drop down to select "IncludedIPSet"
-
-The remaining fields can be left set to their defaults.
-
-Click **Save** to close page, then **Save & Apply** on the following page.
-
-If you made the above changes correctly, the router is ready to work with AutoBlock. If the changes seem to make your router unstable, un-check the enable box for the "Block Attacker Rule" until you can figure what went wrong. OpenWrt can get finicky sometimes. Usually, a reboot followed by a power cycle will fix things.
-
+        
+    
 ## AUTOBLOCK INSTALLATION
 
-**Step 1.** First, you need to download the install script with the following command to your home directory on the Asterisk machine:
+Installing AutoBlock is done in three macro steps:
 
-```bash
-curl -fsSL -O https://github.com/n4mwd/AutoBlock/raw/refs/heads/main/Install-AutoBlock.sh
+* Prepare the Router
+* Run the AutoBlock Installation Script
+* Finish Configuring the Router
 
-```
+[For Detailed Instructions Click Here](installation.md)
 
-If curl is not installed on your machine, you should install that first. Curl is needed by the script itself which will download and install it automatically if not already installed. So it is also possible to copy the script to your Asterisk home directory using other means.
 
-**Step 2.** Next, run the install script. This script requires root access in order to set everything up to run as root. Both the install script and the AutoBlock program itself must be run as root. The install script will stop and ask before doing anything important. Run the command below. Because this uses sudo, it might ask you for your root password for the Asterisk server.
 
-```bash
-sudo bash Install-AutoBlock.sh  
-
-```
-
-**Step 3. (Optional)** Once the program is installed, you can remove the install script with the following command:
-
-```bash
-rm Install-AutoBlock.sh 
-
-```
 
 ## TESTING
 
 The config file has a parameter called `DryRun` that is set to true as a default. This goes through all the motions, but does not perform the final copy to the router. Leave `DryRun` set to true until you are certain the program is configured correctly.
 
-To run the program outside of cron, use the following line:
+To run the program outside of cron, enter the following on the command line:
 
-```bash
-AutoBlock
+>**AutoBlock**
 
-```
+
 
 The default verbosity is set to `STATUS` which will print numerous diagnostic messages on the screen indicating if everything went OK.
 
 ## AUTOBLOCK CONFIGURATION
 
-To change `DryRun` and `Verbosity` and many other configuration parameters, you will need to edit the config file. Only root can edit this file so you will need to use sudo:
+The AutoBlock configuration file is located in /etc/AutoBlock.conf.  It must be edited by the root user.  Most of the file is self explanatory, but for more detailed explanations of the variables, [CLICK HERE](ConfigSetup.md)
 
-```bash
-sudo nano /etc/AutoBlock.conf
 
-```
+## Asterisk CONFIGURATION
 
-If you don't use 'sudo' then you wont be able to save your changes. Here is a list of variables that can be changed:
-
-| Variable | Description | Default Value |
-| --- | --- | --- |
-| `DRYRUN` | No change mode | TRUE |
-| `VERBOSITY` | QUIET, FATAL, WARN, STATUS | STATUS |
-| `LOGFILEPATH` | Path to AutoBlock.log | "/var/log/AutoBlock.log" |
-| `ASTERISKNOTICEFILE` | Path to asterisk log file | "/var/log/asterisk/messages.log" |
-| `FIREWALLBLOCKLISTPATH` | Path on router for ipset | "/etc/luci-uploads/blocklist.txt" |
-| `REQUESTTYPES` | REGISTER, INVITE",OPTIONS,* | * |
-| `ALLOWNAMEDSERVER` | Whitelist named servers | FALSE |
-| `ALLOWEDNUMERICALIDS` | Permitted numerical accounts | 0-4000 |
-| `IGNOREBLOCKS` | Whitelisted netblocks | 192.168.1.0/24 |
-| `MINCIDR` | Minimum CIDR bits | 16 |
-| `MAXCIDR` | Maximum CIDR bits | 24 |
-| `USEWHOIS` | Use whois to get netblock | TRUE |
-| `TRANSFERCMD` | Command to send to router | "rsync -c -e 'ssh -o BatchMode=yes' %src% root@192.168.1.1:%dst%" |
-| `RELOADCMD` | Command to reload firewall | "ssh -o BatchMode=yes root@192.168.1.1 ' /etc/init.d/firewall reload' " |
-
-Note that all variables must be in the config file even if defaults are used.
-
-The `AutoBlock.conf` file is heavily commented to explain the various variables in more detail. For most default installations that use OpenWrt, you will need to change `DRYRUN`, `VERBOSITY`, and `ALLOWEDNUMERICALIDS` to match your Asterisk configuration.
-
-If you have issues with external users getting accidentally blocked due to a misconfigured ATA, you can add their IP or domain name to `IGNOREBLOCKS`. Also, if your local IP range is not 192.168.1.0/24, then you will need to change that to your actual local IP netblock.
-
-The defaults for `TRANSFERCMD` (transfer ipset to router) and `RELOADCMD` (reload router firewall) will usually work for most OpenWrt routers. If you are using a non-standard configuration, such as a non-OpenWrt router, or you are using the firewall on the Asterisk machine, then you will have to modify these two variables to suit your situation. When using the firewall on your Asterisk machine, the following is close to what you will need (but not exact):
-
-* `TRANSFERCMD`: "cp %src% %dst%"
-* `RELOADCMD`: "/etc/init.d/firewall reload"
-* `FIREWALLBLOCKLISTPATH`: "/etc/firewall/ipset/blocklist.txt"
-
-Note that `%src%` is replaced with the path to the local ipset file and `%dst%` is replaced with the `FireWallBlockListPath` variable from the config file.
-
-## ASTERISK CONFIGURATION
-
-On your Asterisk machine, the logger must be active and you should have a line similar to the following in your `/etc/asterisk/logger.conf` file:
+On your Asterisk machine, the logger must be active and you should have a line similar to the following in your `/etc/Asterisk/logger.conf` file:
 
 ```text
-messages.log => notice,warning,error
+    messages.log => notice,warning,error
 
 ```
 
-The name of the log file here that Asterisk will generate is "messages.log" and this should match the config variable `ASTERISKNOTICEFILE`. Also, since AutoBlock only looks at `NOTICE` log messages, the word "notice" must appear as shown in the above line. You should not include "security" here or else Asterisk will continuously spew an extremely high volume of status messages, most of them useless, to your log file. The security flag is not used by AutoBlock and, if included, will cause more harm than good.
+The name of the log file here that Asterisk will generate is "messages.log" and this should match the config variable `AsteriskNOTICEFILE`. Also, since AutoBlock only looks at `NOTICE` log messages, the word "notice" must appear as shown in the above line. You should not include "security" here or else Asterisk will continuously spew an extremely high volume of status messages, most of them useless, to your log file. The security flag is not used by AutoBlock and, if included, will cause more harm than good.
 
 ## RUNNING AUTOBLOCK
 
-If everything went like it should, Cron should be automatically running AutoBlock at the frequency you selected in the install file. If something doesn't seem like its working quite right, then you can look in the `/var/log/AutoBlock.log` file for clues. As said before, you can run AutoBlock manually by simply entering "AutoBlock" on the command line. It currently has no command line parameters.
+If everything went like it should, Cron should be automatically running AutoBlock at the frequency you selected in the install file. If something doesn't seem like its working quite right, then you can look in the `/var/log/AutoBlock.log` file for clues. As said before, you can run AutoBlock manually by simply entering "AutoBlock" on the command line. 
 
 
-```
+### COMMAND LINE OPTIONS
+
+Only one command line option with an optional parameter is allowed at a time.  The following is a list of command line options that might be useful.
 
 
-```
+| OPTION | PARAMETER | DESCRIPTION |
+| :--- | :--- | :--- |
+|--help, -help, -h | `<empty>` | Prints out helpful information. |
+| -dryrun, -d | `<empty>`, true, false | Overrides conf file DRYRUN setting.  Default=true. |
+| -remove, -r | IPv4`*` | Removes IP from whois list immediately.  |
+| -check, -c | IPv4`*`  | Check to see if the IP is in the whois list. |
+| -purge, -p | #days |  Purges whois entries older than #days |
+| -version, -v  | `<empty>` | Prints the version number. |
+| -verbosity, -V | level`**` | Overrides conf file VERBOSITY |
+
+`*` Can be either a dotted IPv4 address (no cidr) or a domain name that will resolve to an IPv4 address.<br>
+`**` Verbosity level can be: quiet, fatal, warn, status.
