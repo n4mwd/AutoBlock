@@ -210,7 +210,7 @@ Compile_Code()
     rm -f AutoBlock
 
     # Execute explicit compilation chain in local working directory
-    gcc -o AutoBlock AutoBlock.c Hash-ip.c ReadIpList.c ReadMsgs.c tries.c whois.c config.c
+    gcc -o AutoBlock AutoBlock.c Hash-ip.c ReadIpList.c ReadMsgs.c tries.c whois.c config.c import.c parameters.c
 
     if [ $? -ne 0 ] || [ ! -f "AutoBlock" ]; then
         echo "❌ ERROR: Compilation failed. Cannot continue."
@@ -219,21 +219,6 @@ Compile_Code()
     echo "✅ Compilation successful. Program binary created."
 }
 
-
-
-is_dropbear() 
-{
-    # Grab the SSH software version string via netcat
-    # Dropbear banners look like: "SSH-2.0-dropbear_2022.82"
-    local banner
-    banner=$(nc -w 2 "$ROUTER_IP" 22 2>/dev/null | head -n 1)
-
-    if echo "$banner" | grep -iq "dropbear"; then
-        return 0 # True: It is Dropbear
-    else
-        return 1 # False: OpenSSH or something else
-    fi
-}
 
 
 # Global Variable
@@ -302,7 +287,7 @@ Check_Router()
     DEFAULT_IP=${DEFAULT_IP:-"192.168.1.1"}
 
     echo ""
-    read -p "Enter your router's network IP address [$DEFAULT_IP]: " ROUTER_IP
+    read -p "Enter your OpenWrt router's network IP address [$DEFAULT_IP]: " ROUTER_IP
     ROUTER_IP=${ROUTER_IP:-$DEFAULT_IP}
     
     echo "Checking connectivity with: $ROUTER_IP"
@@ -371,6 +356,32 @@ Check_Router()
     # Clean up structural footprint tests
     ssh -i "$KEY_FILE" root@"$ROUTER_IP" "rm -f /tmp/text.tmp"
     rm -f /tmp/text.tmp
+    
+    # preconfigure for usb drive
+    SSH_OPTS="-i $KEY_FILE -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ssh $SSH_OPTS root@"$ROUTER_IP" <<- 'EOF'
+        # Check if /mnt/usb is explicitly listed as a mount point
+        if ! grep -qs '/mnt/usb ' /proc/mounts; then
+            echo "ERROR: /mnt/usb is NOT mounted! Aborting script to protect flash memory."
+            echo "ERROR: If you mounted your USB drive under a different name, it must be"
+            echo "ERROR: changed to '/mnt/usb' .  Please consult the installation readme."
+            exit 1
+        fi
+
+        # If the script gets here, the USB is safely mounted
+        echo "USB mount detected. Proceeding with installation..."
+        mkdir -p /mnt/usb/AutoBlock/
+        echo "5.135.0.0/16" > /mnt/usb/AutoBlock/blocklist.txt
+        ln -sfn /mnt/usb/AutoBlock /etc/luci-uploads/AutoBlock
+EOF
+# The above EOF must be flush left with no other characters on the line, not even comments.
+
+    # Check the exit status of the SSH command right after it finishes
+    if [ $? -ne 0 ]; then
+        echo "Remote installation to router failed!"
+        exit 1
+    fi
+    
     echo "✅ Router communication verified."
 }
 
@@ -434,7 +445,7 @@ else
     echo "NOTICE: Since you are creating a non-standard installation, you"
     echo "will need to configure your firewall separately from this script."
     echo "------------------------------------------------------------------"
-    echo "Skipping SSH router automation..."
+    echo "Skipping OpenWrt router automation..."
 fi
 
 
