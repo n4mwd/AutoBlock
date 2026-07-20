@@ -240,6 +240,54 @@ is_dropbear()
 copy_ssh_key() 
 {
     local TARGET_DIR
+    local TARGET_FILE
+    local LOCAL_KEY_FILE="/root/.ssh/id_ed25519.pub"
+    
+    # Read the local public key into a variable (stripping trailing newlines)
+    local PUB_KEY
+    PUB_KEY=$(cat "$LOCAL_KEY_FILE")
+
+    # Dynamically branches using your updated global-variable function
+    if is_dropbear; then
+        echo "🎯 Detected Dropbear SSH server (OpenWrt/Embedded)."
+        TARGET_DIR="/etc/dropbear"
+        TARGET_FILE="/etc/dropbear/authorized_keys"
+    else
+        echo "🐧 Detected standard SSH server (OpenSSH/Generic Linux)."
+        TARGET_DIR="/root/.ssh"
+        TARGET_FILE="/root/.ssh/authorized_keys"
+    fi
+
+    echo "Pushing SSH key to $TARGET_FILE..."
+    
+    # Run a remote script block that checks for the key before appending
+    ssh root@"$ROUTER_IP" "
+        mkdir -p '$TARGET_DIR'
+        touch '$TARGET_FILE'
+        chmod 0600 '$TARGET_FILE'
+        
+        # Check if the exact key string already exists in the file
+        if grep -qF '$PUB_KEY' '$TARGET_FILE'; then
+            echo 'ℹ️ Key already exists in $TARGET_FILE. Leaving it alone.'
+        else
+            echo '$PUB_KEY' >> '$TARGET_FILE'
+            echo '✅ Key successfully added.'
+        fi
+    "
+
+    if [ $? -eq 0 ]; then
+        echo "✅ Operation completed successfully."
+        return 0
+    else
+        echo "❌ Error injecting key."
+        return 1
+    fi
+}
+
+
+copy_ssh_key_old() 
+{
+    local TARGET_DIR
     # Dynamically branches using your updated global-variable function
     if is_dropbear; then
         echo "🎯 Detected Dropbear SSH server (OpenWrt/Embedded)."
@@ -359,7 +407,7 @@ Check_Router()
     
     # preconfigure for usb drive
     SSH_OPTS="-i $KEY_FILE -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-    ssh $SSH_OPTS root@"$ROUTER_IP" <<- 'EOF'
+    ssh $SSH_OPTS root@"$ROUTER_IP" <<- 'EOF' 2>&1
         # Check if /mnt/usb is explicitly listed as a mount point
         if ! grep -qs '/mnt/usb ' /proc/mounts; then
             echo "ERROR: /mnt/usb is NOT mounted! Aborting script to protect flash memory."
