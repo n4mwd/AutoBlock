@@ -98,7 +98,7 @@ static void free_chain(IpEntry *head)
  * @param ip The 32-bit IPv4 address to store.
  * @return int The new count of the IP (or -1 if insertion fails).
  */
-int store_ip(DWORD ip, DWORD flags)
+static int store_ip(DWORD ip, DWORD flags)
 {
     size_t index;
     IpEntry *current;
@@ -267,6 +267,8 @@ int HashMessages(void)
 
     return(count);
 }
+
+
 
 
 // Walk the flattened linked list

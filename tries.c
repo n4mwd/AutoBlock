@@ -38,9 +38,7 @@ TrieNode* create_node(void)
     TrieNode* node = (TrieNode*)malloc(sizeof(TrieNode));
     if (node)
     {
-        node->children[0] = NULL;
-        node->children[1] = NULL;
-        node->is_block = false;
+        memset(node, 0, sizeof(TrieNode));
     }
     return node;
 }
@@ -57,23 +55,37 @@ void free_subtree(TrieNode* node)
     if (!node) return;
     free_subtree(node->children[0]);
     free_subtree(node->children[1]);
+    node->children[0] = node->children[1] = NULL;
     free(node);
 }
 
 
 
-// Insert Netblock Function
-// The insertion function handles both requirement conditions
-//  seamlessly:
-// Already Covered: If it hits an active block (ancestor) on its
-//  path down the trie, the new insertion aborts.
-// Covers Existing Entries: Once the exact path length is reached,
-//  it marks the current node and completely deletes any existing
-//  children nodes branching beneath it.
+// Inserts a netblock with cidr bit count.
+//   If it hits an active block (ancestor) on its path down the
+// trie, the new insertion aborts.  Once the exact path length
+// is reached, it marks the current node and completely
+// deletes any existing children nodes branching beneath it.
+// returns TRUE if netblock was actually added, false if not.
 
-// Inserts a netblock. Handles bit counts or masks seamlessly.
+/*
+    typedef struct TrieNode
+    {
+        struct TrieNode *children[2];
+        DWORD count[2];
+        bool is_block; // Marks if this specific prefix represents an active netblock
+    } TrieNode;
 
-void insert_netblock(TrieNode* root, IPTYPE ip)
+    typedef struct
+    {
+        DWORD IP;
+        DWORD bits;
+    } IPTYPE;
+
+*/
+
+
+bool insert_netblock(TrieNode* root, IPTYPE ip, WORD DateStamp)
 {
     TrieNode* current = root;
     DWORD i;
@@ -84,11 +96,12 @@ void insert_netblock(TrieNode* root, IPTYPE ip)
 
     for (i = 0; i < ip.bits; i++)
     {
-        // Condition 1: If we encounter an existing shorter netblock prefix,
+        // If we encounter an existing shorter netblock prefix,
         // this new block is already covered. We ignore it.
         if (current->is_block)
         {
-            return;
+            current->DateAdded = DateStamp;   // update date
+            return(false);
         }
 
         // Extract the i-th bit from left to right (MSB to LSB)
@@ -101,14 +114,113 @@ void insert_netblock(TrieNode* root, IPTYPE ip)
         current = current->children[bit];
     }
 
-    // Condition 2: This block covers this precise prefix.
+    // This block covers this precise prefix.
     // It replaces everything below it by pruning child paths.
-    current->is_block = true;
 
+    if (current->is_block)
+    {
+        current->DateAdded = DateStamp;   // update date
+        return false; // Already existed, not a "new" addition
+    }
+
+    current->is_block = true;
+    current->DateAdded = DateStamp;   // update date
     free_subtree(current->children[0]);
     free_subtree(current->children[1]);
     current->children[0] = NULL;
     current->children[1] = NULL;
+
+    return(true);
+}
+
+
+// Count the nodes in the trie.
+//   Count cidr blocks as containing all their capacity.
+
+// Call this via: ComputeTrieCounts(root, 0);
+DWORD ComputeTrieCounts(TrieNode *node, int level)
+{
+    int bits_remaining;
+    DWORD left_total = 0;
+    DWORD right_total = 0;
+
+    if (node == NULL) return 0;
+
+    bits_remaining = 32 - level;
+
+    // If this node is explicitly a solid block, it represents the entire
+    // capacity of its subnet size. No need to look at its children.
+    if (node->is_block)
+    {
+        node->count[0] = 0;
+        node->count[1] = 0;
+
+        // Return 2^(32-level). Handles 32-bit shift bounds carefully.
+        if (bits_remaining >= 32) return 0xFFFFFFFF;
+        return ((DWORD)1 << bits_remaining);
+    }
+
+    // Recurse to find the true, surviving weight of both children
+    if (node->children[0]) left_total  = ComputeTrieCounts(node->children[0], level + 1);
+    if (node->children[1]) right_total = ComputeTrieCounts(node->children[1], level + 1);
+
+    // Commit the true totals to the tracking arrays
+    node->count[0] = left_total;
+    node->count[1] = right_total;
+
+    return left_total + right_total;
+}
+
+
+void CompressTrieSub(TrieNode *node, int level)
+{
+    int bits_remaining;
+    QWORD total_possible, total_blocked;
+    QWORD lhs_math, rhs_math; // to hold the percentage math
+
+    if (node == NULL || node->is_block) return;
+
+    bits_remaining = 32 - level;
+    total_possible = ((QWORD)1 << bits_remaining);
+    total_blocked = node->count[0] + node->count[1];
+
+    // Check our aggressive threshold condition top-down
+    // Only apply if we are at or deeper than our safety subnet mask (e.g. level 16)
+    if (level >= G_MinCidr && total_possible > 0)
+    {
+        // Cast the 32-bit values to 64-bit BEFORE doing the multiplication
+        lhs_math = total_blocked * 100;
+        rhs_math = total_possible * G_Compress;
+
+//printf("Level: %d, Possible: %u, Blocked: %u, Density: %u%%\n",
+//  level, (DWORD)total_possible, (DWORD)total_blocked, (DWORD)(lhs_math / total_possible) );
+
+        if (lhs_math >= rhs_math)
+        {
+            // The density matches! Convert this node into a block right now.
+            node->is_block = true;
+
+            // Free everything underneath instantly
+            free_subtree(node->children[0]);
+            free_subtree(node->children[1]);
+            node->children[0] = NULL;
+            node->children[1] = NULL;
+            node->count[0] = 0;
+            node->count[1] = 0;
+            return; // Truncation complete, do not dig deeper
+        }
+    }
+
+    // If this node didn't qualify for a full merge, keep checking its children
+    CompressTrieSub(node->children[0], level + 1);
+    CompressTrieSub(node->children[1], level + 1);
+}
+
+
+void CompressTrie(TrieNode *node)
+{
+    ComputeTrieCounts(node, 0);
+    CompressTrieSub(node, 0);
 }
 
 
@@ -226,49 +338,63 @@ int whitelist_netblock(TrieNode* root, IPTYPE ip)
 // reconstruct the IP address bit-by-bit.
 
 // Helper to format a DWORD into standard dotted-decimal ASCII format
-void write_ip_string(FILE* fp, IPTYPE ip)
+void write_ip_string(FILE* fp, IPTYPE ip, TrieNode* node)
 {
     char *str = IP2Str(ip);
 
-    fprintf(fp, "%s\n", str);
+    if (node)
+        fprintf(fp, "%04X:%s\n", (DWORD) node->DateAdded, str);
+    else
+        fprintf(fp, "%s\n", str);
 }
 
 // Recursive function to step down paths and record valid IP strings
-void export_trie_recursive(TrieNode* node, DWORD current_ip, DWORD depth, FILE* fp)
+// CurDate is the current datestamp.  Set to zero when writing whois file.
+// This will cause the AddedDate to be added to the file.  If CurDate is
+// non-zero, it is used to purge old IPs from the output list.
+
+void export_trie_recursive(TrieNode* node, DWORD CurIp, DWORD depth, FILE* fp, WORD CurDate)
 {
     IPTYPE ip;
+    int days;
 
     if (!node) return;
 
     // If an active netblock is found, write it and stop traversing deeper
     if (node->is_block)
     {
-        ip.IP = current_ip;
-        ip.bits = depth;
-        write_ip_string(fp, ip);
+        days = CurDate - node->DateAdded;
+        if (days < 0) days = 0;
+        if (CurDate == 0 || days < G_Expire)   // skip old entries
+        {
+            ip.IP = CurIp;
+            ip.bits = depth;
+            write_ip_string(fp, ip, (CurDate == 0) ? node : NULL);
+        }
         return;
     }
 
     // Traverse the 0 branch
     if (node->children[0])
     {
-        export_trie_recursive(node->children[0], current_ip, depth + 1, fp);
+        export_trie_recursive(node->children[0], CurIp, depth + 1, fp, CurDate);
     }
 
     // Traverse the 1 branch (setting the bit on at the correct depth position)
     if (node->children[1])
     {
-        DWORD next_ip = current_ip | (1 << (31 - depth));
-        export_trie_recursive(node->children[1], next_ip, depth + 1, fp);
+        DWORD next_ip = CurIp | (1 << (31 - depth));
+        export_trie_recursive(node->children[1], next_ip, depth + 1, fp, CurDate);
     }
 }
 
 // Master function to trigger file writing
-void export_netblocks_to_file(TrieNode* root, const char* filename)
+void export_netblocks_to_file(TrieNode* root, const char* filename, WORD DateStamp)
 {
     time_t raw_time;
     struct tm *time_info;
     char time_buffer[128];
+
     FILE* fp = fopen(filename, "w");
 
     if (!fp)
@@ -277,18 +403,22 @@ void export_netblocks_to_file(TrieNode* root, const char* filename)
         return;
     }
 
+    fprintf(fp, "# This list was automatically created by %s.\n"
+                "# Do not edit this list directly.\n", VERSION);
+
     time(&raw_time);  // Get the current system calendar time
-    time_info = localtime(&raw_time); // Convert it into local time structure
+    time_info = localtime(&raw_time);  // Convert to localtime structure
 
     // Format the time into a string
     strftime(time_buffer, sizeof(time_buffer),
-        "# Asterisk Hackers (Updated: %B %d, %Y %H:%M:%S)\n", time_info);
+        "# Asterisk Hacker List (Updated: %B %d, %Y %H:%M:%S)\n",
+        time_info);
 
-    // Write it to your ipset include file
+    // Write it to the ipset include file
     fputs(time_buffer, fp);
 
     // Root level starts at IP 0x00000000 and depth 0
-    export_trie_recursive(root, 0, 0, fp);
+    export_trie_recursive(root, 0, 0, fp, DateStamp);
     fclose(fp);
 }
 
@@ -297,7 +427,7 @@ void export_netblocks_to_file(TrieNode* root, const char* filename)
 // Checks if a single DWORD IP address is covered by any netblock in the trie.
 // Returns true if covered, false otherwise.
 
-bool is_ip_covered(TrieNode* root, DWORD ip)
+bool is_ip_covered(TrieNode* root, DWORD ip, WORD DateStamp)
 {
     TrieNode* current = root;
     DWORD i;
@@ -312,6 +442,7 @@ bool is_ip_covered(TrieNode* root, DWORD ip)
         // If we hit an active netblock node, this IP is covered by an existing block.
         if (current->is_block)
         {
+            current->DateAdded = DateStamp;
             return true;
         }
 

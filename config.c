@@ -21,6 +21,8 @@ If you use this code in any way, I would love to hear from you.  My email
 address is: dennis@galliform.com
 */
 
+// This module handles the config file.
+
 #include "AutoBlock.h"
 
 
@@ -42,12 +44,14 @@ address is: dennis@galliform.com
  * Global variables
  * -------------------------------------------------------------------------- */
 bool    G_DryRun                    = false;
+int     P_DryRun                    = -1;
 char    G_LogFilePath[PATH_SIZE]    = DEFAULTLOGFILE;
 char    G_AsteriskNoticeFile[PATH_SIZE] = {0};
 char    G_FirewallBlockListPath[PATH_SIZE]= {0};
 char    G_TransferCmd[PATH_SIZE]    = {0};
 char    G_ReloadCmd[PATH_SIZE]      = {0};
 DWORD   G_Verbosity                 = STATUS;
+int     P_Verbosity                 = -1;
 DWORD   G_RequestTypes              = 0;
 int     G_AllowNamedServer          = 0;   // 0=FALSE, -1=TRUE, count
 RANGE  *G_AllowedNumericalIds       = NULL;
@@ -57,6 +61,10 @@ int     G_NumIgnoreBlocks           = 0;
 int     G_MinCidr                   = 0;
 int     G_MaxCidr                   = 32;
 bool    G_UseWhois                  = true;
+IPTYPE *G_Imports                   = NULL;
+int     G_NumImports                = 0;
+int     G_Compress                  = 60;
+int     G_Expire                    = 99999999;
 
 
 static char *Continued = NULL;      // buffer for joined continuation lines
@@ -92,13 +100,20 @@ void FreeConfig(void)
         ContBufLen = 0;         // Length of continuation buffer
     }
 
+    if (G_Imports)
+    {
+        free(G_Imports);
+        G_Imports = NULL;
+        G_NumImports = 0;
+    }
+
 }
 
 /* --------------------------------------------------------------------------
  * Internal helper: trim leading and trailing whitespace in-place.
  * Returns pointer to the first non-whitespace character in s.
  * -------------------------------------------------------------------------- */
-static char *trim(char *s)
+char *trim(char *s)
 {
     char *end;
     int  len;
@@ -131,18 +146,19 @@ static char *trim(char *s)
 
 char *StripComments(char *s)
 {
-    char *p;
-    
-    for (p = s; *p; p++)
+    char *p, ch;
+
+    for (p = s; (ch = *p) != '\0'; p++)
     {
-        if (*p == '#' || *p == '\r' || *p == '\n')   // end of line chars
+
+        if (ch == '#' || ch == '\r' || ch == '\n')   // end of line chars
         {
-            *p = 0;
+            *p = '\0';
             break;
         }
-        else if (*p == '\v' || *p == '\f' || *p == '\t') *p = ' ';    // change to spaces
+        else if (ch == '\v' || ch == '\f' || ch == '\t') *p = ' ';    // change to spaces
     }
-    
+
     return(s);
 }
 
@@ -378,7 +394,7 @@ enum
     DRYRUN=0, VERBOSITY, LOGFILEPATH, ASTERISKNOTICEFILE,
     FIREWALLBLOCKLISTPATH, REQUESTTYPES, ALLOWNAMEDSERVER,
     ALLOWEDNUMERICALIDS, IGNOREBLOCKS, MINCIDR, MAXCIDR, USEWHOIS,
-    TRANSFERCMD, RELOADCMD, VARIABLE_COUNT
+    TRANSFERCMD, RELOADCMD, IMPORT, COMPRESS, EXPIRE, VARIABLE_COUNT
 };
 
 int GetVariable(char *Token)
@@ -401,6 +417,9 @@ int GetVariable(char *Token)
         "USEWHOIS",
         "TRANSFERCMD",
         "RELOADCMD",
+        "IMPORT",
+        "COMPRESS",
+        "EXPIRE",
         NULL
     };
 
@@ -608,6 +627,37 @@ void ProcessIgnoredBlocks(char **Tokens)
 }
 
 
+bool IpMaskMatch(IPTYPE block_ip, DWORD match_ip)
+{
+    DWORD mask;
+
+    // Handle edge case: a 0-bit mask encompasses the entire
+    // internet (0.0.0.0/0)
+    if (block_ip.bits == 0)
+    {
+        mask = 0;
+    }
+    // Handle standard CIDR masks (1 to 32 bits)
+    else if (block_ip.bits >= 32)
+    {
+        mask = 0xFFFFFFFF;
+    }
+    else
+    {
+        // Create a mask with the highest 'bits' set to 1.
+        mask = (0xFFFFFFFF << (32 - block_ip.bits));
+    }
+
+    // Compare the network prefixes of both the parameter IP and
+    // the block IP
+    if ((match_ip & mask) == (block_ip.IP & mask))
+    {
+        return true; // Match found, IP is whitelisted
+    }
+    return false;
+}
+
+
 // typedef struct
 // {
 //     DWORD IP;       // IPv4 in DWORD format
@@ -620,38 +670,12 @@ void ProcessIgnoredBlocks(char **Tokens)
 
 bool is_ip_whitelisted(DWORD ip)
 {
-    DWORD block_ip, bits, mask;
     int i;
 
     // Loop through all elements in the global array
     for (i = 0; i < G_NumIgnoreBlocks; i++)
     {
-        block_ip = G_IgnoreBlocks[i].IP;
-        bits = G_IgnoreBlocks[i].bits;
-
-        // Handle edge case: a 0-bit mask encompasses the entire
-        // internet (0.0.0.0/0)
-        if (bits == 0)
-        {
-            mask = 0;
-        }
-        // Handle standard CIDR masks (1 to 32 bits)
-        else if (bits >= 32)
-        {
-            mask = 0xFFFFFFFF;
-        }
-        else
-        {
-            // Create a mask with the highest 'bits' set to 1.
-            mask = (0xFFFFFFFF << (32 - bits));
-        }
-
-        // Compare the network prefixes of both the parameter IP and
-        // the block IP
-        if ((ip & mask) == (block_ip & mask))
-        {
-            return true; // Match found, IP is whitelisted
-        }
+        if (IpMaskMatch(G_IgnoreBlocks[i], ip)) return true;
     }
 
     return false; // No blocks encompassed the IP
@@ -750,11 +774,28 @@ void ProcessTransferCmd(void)
     // copy back to G_TransferCmd
     strncpy(G_TransferCmd, TempStr, sizeof(G_TransferCmd) - 1);
     G_TransferCmd[sizeof(G_TransferCmd) - 1] = '\0';
-    PrintErr(STATUS, "Cmd: %s\n", G_TransferCmd);
+ //   PrintErr(STATUS, "Cmd: %s\n", G_TransferCmd);
 }
 
 
 
+void ProcessImports(char **Tokens)
+{
+    int i;
+    char tmpstr[1024];
+
+    if (!Tokens || !Tokens[0]) return;
+
+    for (i = 1; Tokens[i]; i++)
+    {
+        // Get rid of quotes if there
+        GetConfigPath(Tokens[i], tmpstr, sizeof(tmpstr));
+        ReadImports(tmpstr);
+    }
+
+    return;
+
+}
 
 
 
@@ -896,6 +937,21 @@ int ParseConfig(const char *filepath)
                 GetConfigPath(tokens[1], G_ReloadCmd, sizeof(G_ReloadCmd));
                 break;
 
+            case IMPORT:
+                ProcessImports(tokens);
+                break;    
+
+            case COMPRESS:
+                G_Compress = atoi(tokens[1]);
+                if (G_Compress < 0) G_Compress = 0;
+                if (G_Compress > 100) G_Compress = 100;
+                break;
+
+            case EXPIRE:  // use -1 no expire
+                G_Expire = atoi(tokens[1]);
+                if (G_Expire < 0) G_Expire = 999999999;
+                break;
+
             default:
                 PrintErr(WARN, "Unknown Variable: %s\n", tokens[0]);
                 break;
@@ -933,7 +989,9 @@ int ParseConfig(const char *filepath)
         G_MaxCidr = 24;
     }
 
-    
+    // Command line parameter overrides
+    if (P_DryRun != -1) G_DryRun = (bool) P_DryRun;
+    if (P_Verbosity != -1) G_Verbosity = P_Verbosity;
 
     return 0;
 }

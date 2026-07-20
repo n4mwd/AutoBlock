@@ -21,17 +21,16 @@ If you use this code in any way, I would love to hear from you.  My email
 address is: dennis@galliform.com
 */
 
-// This module manages access to tht whois server.
+// This module manages access to the whois server.
 
 #include "AutoBlock.h"
 
 #define RADB_HOST "whois.radb.net"
-#define RADB_PORT "43"
+#define RADB_PORT 43
 
 
 
 DWORD Domain2Ip(char *str)
-
 {
 
     DWORD ip;
@@ -93,9 +92,9 @@ DWORD Domain2Ip(char *str)
 
 
 /* =========================================================================
-   THE CROSS-COMPILER FUNCTION
+   THE CROSS-COMPILER CONNECT FUNCTION
    ========================================================================= */
-int connect_to_radb(void)
+int connect_to_server(char *url, int port)
 {
     /* ANSI C Strict: All local variables MUST be declared at the very top */
     SOCKET_TYPE sock_fd;
@@ -105,9 +104,10 @@ int connect_to_radb(void)
       struct sockaddr_in server_addr;
     #else
       struct addrinfo hints, *res;
+      char portStr[16];
     #endif
 
-
+if (!url || !url[0]) return(-1);
 
 
 
@@ -117,17 +117,17 @@ int connect_to_radb(void)
        --------------------------------------------------------------------- */
 
     /* Resolve domain name */
-    server = gethostbyname(RADB_HOST);
+    server = gethostbyname(url);
     if (server == NULL)
     {
-        PrintErr(WARN, "Failed to resolve hostname: %s\n", RADB_HOST);
+        PrintErr(WARN, "Failed to resolve hostname: %s\n", url);
         return -1;
     }
 
     /* Configure target sockaddr_in layout safely */
     memset((char *)&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons((unsigned short)atoi(RADB_PORT));
+    server_addr.sin_port = htons((WORD) port);
     memcpy((char *)&server_addr.sin_addr.s_addr, (char *)server->h_addr, server->h_length);
 
     /* Create the network socket */
@@ -143,7 +143,7 @@ int connect_to_radb(void)
     /* Connect to the server */
     if (connect(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
-        PrintErr(WARN, "Failed to connect to RADb.\n");
+        PrintErr(WARN, "Failed to connect to %s.\n", url);
         CLOSE_SOCKET(sock_fd);
         return -1;
     }
@@ -160,9 +160,10 @@ int connect_to_radb(void)
     hints.ai_socktype = SOCK_STREAM; /* TCP */
 
     /* Resolve domain name to IP address */
-    if (getaddrinfo(RADB_HOST, RADB_PORT, &hints, &res) != 0)
+    sprintf(portStr, "%5d", port);
+    if (getaddrinfo(url, portStr, &hints, &res) != 0)
     {
-        PrintErr(WARN, "Failed to resolve RADb hostname: %s\n", RADB_HOST);
+        PrintErr(WARN, "Failed to resolve hostname: %s\n", url);
         return -1;
     }
 
@@ -180,7 +181,7 @@ int connect_to_radb(void)
     /* Connect to the server */
     if (connect(sock_fd, res->ai_addr, res->ai_addrlen) < 0)
     {
-        PrintErr(WARN, "Failed to connect to RADb");
+        PrintErr(WARN, "Failed to connect to %s.\n", url);
         CLOSE_SOCKET(sock_fd);
         freeaddrinfo(res);
         return -1;
@@ -189,13 +190,6 @@ int connect_to_radb(void)
     freeaddrinfo(res);
 
 #endif
-
-
-    /* ---------------------------------------------------------------------
-       UNIFIED FINALIZATION (Works identically on both targets)
-       --------------------------------------------------------------------- */
-    /* Activate multiple-command persistent mode */
-//    send(sock_fd, "!!\n", 3, 0);
 
     /* Return socket descriptor safely casted to int */
     return (int)sock_fd;
@@ -252,7 +246,7 @@ int query_radb_netblock(char *ip_address, IPTYPE *ip)
     if (!ip_address || ip_address[0] == 0 || !ip) return(0);
 
     // Initialize the connection
-    sock_fd = connect_to_radb();
+    sock_fd = connect_to_server(RADB_HOST, RADB_PORT);
     if (sock_fd < 0) return(0);
 
     // Construct the query: "-l <ip>\n" ('l' = lower case L)

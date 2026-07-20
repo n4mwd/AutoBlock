@@ -28,25 +28,17 @@ address is: dennis@galliform.com
 #include <time.h>
 
 // To compile with gcc, use the following:
-// gcc -o AutoBlock AutoBlock.c  Hash-ip.c  ReadIpList.c  ReadMsgs.c  tries.c  whois.c config.c
+// gcc -o AutoBlock AutoBlock.c  Hash-ip.c  ReadIpList.c  ReadMsgs.c  tries.c  whois.c config.c import.c parameters.c
 
 // To view hacker counts in openwrt:
 //   nft list ruleset | grep -A 1 -i "block-attacker"
 
-// Send IP list to openwrt
-// Send to "/var/tmp/bad_ips.txt" on asterisk.lan to /etc/blocklist.txt on
-// tomato.lan using scp.
-//   scp -O /var/tmp/bad_ips.txt root@tomato.lan:/etc/blocklist.txt
-
-// Tun the following to get it to stick:
-//   ssh root@tomato.lan '/etc/init.d/firewall reload'
+// To view remotely:
+// ssh -o BatchMode=yes root@192.168.1.1 ' nft list ruleset | grep -A 1 -i "block-attacker" ' 
 
 // For duplicate sets in openwrt use the following:
 //   nft delete set inet fw4 IncludedIpSet
 
-// If you ssh into openwrt, you can run the following command to list
-// the count of blocked attempts:
-// nft list ruleset | grep -A 1 -i "block-attacker"
 
 void Send2Router(void)
 {
@@ -117,12 +109,7 @@ bool is_root(void)
 #endif
 }
 
-//Checks if a file is insecure (not owned by root or writeable by others).
-//
-// @param path The absolute path to the file (e.g., "/etc/AutoBlock.conf").
-// @return true if the file is NOT owned by root OR can be modified
-// by others.  Returns true on system error (fails safe by treating
-// errors as insecure).
+// Checks if a file is insecure (not owned by root or writeable by others).
 
 bool NotRootOwned(char *path)
 {
@@ -165,12 +152,33 @@ bool NotRootOwned(char *path)
 }
 
 
+// Return number of days since January 1, 2020 @ 00:00:00
 
-int main(void)
+WORD GetDateStamp(void)
 {
-    int countHash, countUnique, countWhois;
-    int bits, oldbits, i, rt;
+    // Hardcoded UTC seconds for Jan 1, 2020 00:00:00 UTC
+    const time_t base_time_utc = 1577836800;
+
+
+    // Get current calendar time in UTC seconds from Epoch
+    time_t current_time = time(NULL);
+    if (current_time == (time_t)(-1))
+    {
+        return 0;
+    }
+
+    // Return delta in seconds
+    return ((WORD) ((current_time - base_time_utc) / 86400));
+}
+
+
+
+int main(int argc, char *argv[])
+{
+    int countHash, countImport, countUnique, countWhois;
+    int bits, oldbits, i, rt, TotalNewAdds;
     DWORD ip;
+    WORD DateStamp;
     IPTYPE ipBlk;
     TrieNode *TriRoot;
     char *IpStr;
@@ -179,6 +187,11 @@ int main(void)
     WSADATA wsaData;
 #endif
 
+    if (argc > 1)
+    {
+        rt = ProcessCmdLine(argc, argv);
+        if (rt != 0) return(0);
+    }    
 
 #if defined(__BORLANDC__)
     if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0)
@@ -187,6 +200,9 @@ int main(void)
         return -1;
     }
 #endif
+
+    DateStamp = GetDateStamp();
+
 
     if (!is_root())
     {
@@ -202,6 +218,8 @@ int main(void)
         return(-4);
     }
 
+    PrintErr(STATUS, "%s is Running.\n", VERSION);
+
     if (ParseConfig(CONFIGPATH))
     {
         PrintErr(FATAL, "Could not parse \"%s\" config file.\n", CONFIGPATH);
@@ -212,18 +230,31 @@ int main(void)
     TriRoot = create_node();  // Create Trie
 
 
-    // Read existing bad IPs into Trie here
+    // Read existing bad IPs from WhoiIs file into Trie here
     // Function handles file i/o errors
     PrintErr(STATUS, "Reading existing banned IP blocks.\n");
     process_ip_file(MAINPATH, TriRoot);
 
 
+    // Add imported IPs directly to the Trie
+    PrintErr(STATUS, "Reading %u imported IP blocks.\n", G_NumImports);
+    countImport = ImportIPs(TriRoot, DateStamp);
+    if (countImport >= 0)
+    {
+        PrintErr(STATUS, "There were %u unique bad IP's imported.\n",
+                 countImport);
+        changed = true;
+    }
+
     // Read message log
+    // These go into the hash table first to prevent duplicates
     PrintErr(STATUS, "Reading New IP's from: %s\n", G_AsteriskNoticeFile);
     countHash = HashMessages();
+
     if (countHash >= 0)
         PrintErr(STATUS, "There were %d bad IP's added to the hash table.\n",
                  countHash);
+
 
     // Convert to flat linked list
     countUnique = HashFlat();
@@ -234,7 +265,7 @@ int main(void)
     GetNextHash(true);   // initialize the walker
     while ((ip = GetNextHash(false)) != 0)
     {
-        if (is_ip_covered(TriRoot, ip)) continue; // already there
+        if (is_ip_covered(TriRoot, ip, DateStamp)) continue; // already there
 
         // We check the whitelist twice.  Here we check it before it gets
         // added to the blacklist trie.  Later we check the trie again to
@@ -267,21 +298,24 @@ int main(void)
         if (bits == 0 || bits > G_MaxCidr) bits = G_MaxCidr;
         if (bits < G_MinCidr) bits = G_MinCidr;
         if (oldbits != bits) PrintErr(STATUS, "Cidr Mofified ->(%d)", bits);
-        insert_netblock(TriRoot, ipBlk);
+        insert_netblock(TriRoot, ipBlk, DateStamp);
         PrintErr(STATUS, "\n");
     }
 
     PrintErr(STATUS, "There were %d new netbocks added to the blacklist.\n", countWhois);
     destroy_hash_table();   // free hash table
 
-    // Save unmangled netblocks to the history file.
+
+    // Save unmangled netblocks to the whois history file.
     if (changed)
     {
         PrintErr(STATUS, "Updating main whois file.\n");
-        export_netblocks_to_file(TriRoot, MAINPATH);
+        export_netblocks_to_file(TriRoot, MAINPATH, false);
     }
 
-
+    // Compress the trie
+    CompressTrie(TriRoot);
+    TotalNewAdds = countImport + countWhois;
 
     PrintErr(STATUS, "Removing whitelist blocks.\n");
     if (G_IgnoreBlocks && G_NumIgnoreBlocks)
@@ -307,7 +341,7 @@ int main(void)
     {
         // Save whitelist mangled trie
         PrintErr(STATUS, "Sending to Router.\n");
-        export_netblocks_to_file(TriRoot, SRCPATH);
+        export_netblocks_to_file(TriRoot, SRCPATH, true);
         Send2Router();
     }
     free_subtree(TriRoot);  // destroy trie
@@ -315,9 +349,9 @@ int main(void)
 
     FreeConfig();   // free the heap
 
-    PrintErr(WARN, "AutoBlock Run, %d IPs found in logs, "
-                   "%d unique, %d newly blocked.\n",
-                   countHash, countUnique, countWhois);
+    PrintErr(WARN, "AutoBlock Run, %d unique IPs found in logs, "
+                   "%d unique imported IPs, %d newly blocked.\n",
+                   countUnique, countImport, TotalNewAdds);
 
     return(0);
 

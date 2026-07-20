@@ -21,10 +21,15 @@ If you use this code in any way, I would love to hear from you.  My email
 address is: dennis@galliform.com
 */
 
+#define VERSION "AutoBlock v1.5.0"
+#define VERSION2 "Copyright 2026 by Dennis Hawkins (n4mwd@yahoo.com)"
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+
 
 
 #if defined(__BORLANDC__)
@@ -57,7 +62,7 @@ address is: dennis@galliform.com
     #define popen        _popen
     #define pclose       _pclose
     #define WEXITSTATUS(status) status
-    //typedef unsigned __int32 DWORD;
+    typedef unsigned __int64 QWORD;
     typedef unsigned char BYTE;
     typedef unsigned char bool;
     #define false  0
@@ -83,9 +88,14 @@ address is: dennis@galliform.com
         setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv)); }
     #define CLOSE_NETWORK()    {/* */}
     #define snprintf snprintf
+    #define strncmpi strncasecmp
+    #define stricmp  strcasecmp
+    typedef uint64_t QWORD;
     typedef uint32_t DWORD;
+    typedef uint16_t WORD;
     typedef uint8_t  BYTE;
 #endif
+
 
 #define HASH_SIZE  256     // size of hash table
 #define PATH_SIZE  512     // File/cmd path length
@@ -115,7 +125,9 @@ enum {QUIET, FATAL, WARN, STATUS };
 typedef struct TrieNode
 {
     struct TrieNode *children[2];
+    DWORD count[2]; 
     bool is_block; // Marks if this specific prefix represents an active netblock
+    WORD DateAdded;
 } TrieNode;
 
 typedef struct
@@ -132,12 +144,14 @@ typedef struct
 
 
 extern bool    G_DryRun;
+extern int     P_DryRun;
 extern char    G_LogFilePath[PATH_SIZE];
 extern char    G_AsteriskNoticeFile[PATH_SIZE];
 extern char    G_FirewallBlockListPath[PATH_SIZE];
 extern char    G_TransferCmd[PATH_SIZE];
 extern char    G_ReloadCmd[PATH_SIZE];
 extern DWORD   G_Verbosity;
+extern int     P_Verbosity;
 extern DWORD   G_RequestTypes;
 extern int     G_AllowNamedServer;
 extern RANGE  *G_AllowedNumericalIds;
@@ -147,22 +161,19 @@ extern int     G_NumIgnoreBlocks;
 extern int     G_MinCidr;
 extern int     G_MaxCidr;
 extern bool    G_UseWhois;
+extern IPTYPE *G_Imports;
+extern int     G_NumImports;
+extern int     G_Compress;
+extern int     G_Expire;
 
 
 
 
-// Test prototypes
-int tries_main(void);
-int whois_main(void);
-int readmsgs_main(void);
-int test_parse_ip_string(void);
-int readiplist_main(void);
-int haship_main(void);
 
 
 // Functions
 void PrintErr(DWORD level, const char *fmt, ...);
-void insert_netblock(TrieNode* root, IPTYPE ip);
+bool insert_netblock(TrieNode* root, IPTYPE ip, WORD DateStamp);
 TrieNode* create_node(void);
 int Str2Ip(const char *ip_str, IPTYPE *ip);
 char *IP2Str(IPTYPE ip);
@@ -172,16 +183,29 @@ int HashFlat(void);
 int HashMessages(void);
 DWORD GetNextHash(int init);
 int query_radb_netblock(char *ip_address, IPTYPE *ip);
-bool is_ip_covered(TrieNode* root, DWORD ip);
+bool is_ip_covered(TrieNode* root, DWORD ip, WORD DateStamp);
 void free_subtree(TrieNode* node);
-void export_netblocks_to_file(TrieNode* root, const char* filename);
-int process_ip_file(const char *filename, TrieNode *root);
+void export_netblocks_to_file(TrieNode* root, const char* filename, WORD DateStamp);
+DWORD process_ip_file(const char *filename, TrieNode *root);
 DWORD Domain2Ip(char *str);
 int ParseConfig(const char *filepath);
 int SearchID(int ext);
 void FreeConfig(void);
 int whitelist_netblock(TrieNode* root, IPTYPE ip);
 bool is_ip_whitelisted(DWORD ip);
+int connect_to_server(char *url, int port);
+int NetRead(int sock_fd, char *Buf, int BufSize);
+int ReadImports(char *path);
+int ImportIPs(TrieNode* root, WORD DateStamp);
+char *trim(char *s);
+void CompressTrie(TrieNode *node);
+bool is_root(void);
+bool IpMaskMatch(IPTYPE block_ip, DWORD match_ip);
+WORD GetDateStamp(void);
+WORD ReadWhoisIp(const char *ip_str, IPTYPE *ip);
+int ProcessCmdLine(int argc, char *argv[]);
+
+
 
 
 
